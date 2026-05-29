@@ -56,17 +56,35 @@ class ZitRegions(scripts.Script):
                      "hard seam appears down the boundary.",
             )
             isolation = gr.Slider(
-                0, 100, value=20, step=5,
-                label="Apply for (% of steps)",
-                info="Apply separation only over this fraction of the early "
-                     "steps, then release so the scene fuses. ~20 works well for "
-                     "few-step turbo; the key knob to tune.",
+                0, 100, value=30, step=5,
+                label="Hard cut for (% of steps)",
+                info="Hard separation over this fraction of early steps to commit "
+                     "two subjects, then drop to the residual below.",
+            )
+            residual = gr.Slider(
+                0.0, 16.0, value=3.0, step=0.5,
+                label="Residual separation",
+                info="Gentle cross-region penalty kept for the remaining steps so "
+                     "subjects don't re-merge while the scene fuses. 0 = full "
+                     "release (tends to re-merge); ~2-4 is a good range.",
             )
             debug = gr.Checkbox(value=False, label="Debug (print shapes/spans)")
-        return [enabled, mode, ratios, strength, overlap, isolation, debug]
+
+        # let "send to txt2img" / paste-params restore these from image metadata
+        self.infotext_fields = [
+            (mode, "ZIT mode"),
+            (ratios, "ZIT ratios"),
+            (strength, "ZIT strength"),
+            (overlap, "ZIT overlap"),
+            (isolation, "ZIT hardcut"),
+            (residual, "ZIT residual"),
+        ]
+        self.paste_field_names = [k for _, k in self.infotext_fields]
+
+        return [enabled, mode, ratios, strength, overlap, isolation, residual, debug]
 
     # ----------------------------------------------------------------- #
-    def process_before_every_sampling(self, p, enabled, mode, ratios, strength, overlap, isolation, debug, **kwargs):
+    def process_before_every_sampling(self, p, enabled, mode, ratios, strength, overlap, isolation, residual, debug, **kwargs):
         # install here (not process()) so we run AFTER Forge applies LoRAs and
         # rebuilds forge_objects.unet; installing earlier gets wiped by LoRAs.
         self._teardown()  # safety: never leave a stale patch installed
@@ -86,12 +104,14 @@ class ZitRegions(scripts.Script):
         plan.debug = debug
         plan.active = False  # flipped on once captions + grid are ready
 
-        # cross-region image separation: soft penalty (finite) or hard cut (inf)
+        # cross-region image separation: hard cut early, gentle residual after
         plan.separation_strength = float("inf") if strength >= 16.0 else float(strength)
+        plan.residual_strength = float("inf") if residual >= 16.0 else float(residual)
         plan.isolation_frac = max(0.0, min(1.0, isolation / 100.0))
         plan.total_steps = getattr(p, "steps", 0) or 0
         plan.cur_step = 0
-        plan.image_self_active = plan.isolation_frac > 0.0 and strength > 0.0
+        plan.cur_strength = plan.separation_strength
+        plan.image_self_active = plan.cur_strength > 0.0
 
         # token grid: VAE /8 then patch_size 2 -> /16
         plan.grid = (p.height // 16, p.width // 16)
@@ -106,6 +126,19 @@ class ZitRegions(scripts.Script):
 
         plan.active = True
         self.plan = plan
+
+        # record settings into image metadata so a good run can be reproduced
+        params = getattr(p, "extra_generation_params", None)
+        if params is not None:
+            params.update({
+                "ZIT mode": mode,
+                "ZIT ratios": ratios,
+                "ZIT strength": strength,
+                "ZIT overlap": overlap,
+                "ZIT hardcut": isolation,
+                "ZIT residual": residual,
+            })
+
         if debug:
             print(f"[zit] active: grid={plan.grid}, regions={len(plan.regions)}")
 
@@ -145,13 +178,16 @@ class ZitRegions(scripts.Script):
             if plan.debug and not replaced:
                 print("[zit] WARNING: no caption key found in c; nothing swapped")
 
-            # decide whether cross-region image isolation is active this step
+            # hard cut over the early window, then drop to the residual penalty
             total = plan.total_steps or 1
             frac = plan.cur_step / max(1, total)
-            plan.image_self_active = frac < plan.isolation_frac
+            plan.cur_strength = (plan.separation_strength
+                                 if frac < plan.isolation_frac
+                                 else plan.residual_strength)
+            plan.image_self_active = plan.cur_strength > 0.0
             if plan.debug and plan.cur_step in (0, total - 1):
                 print(f"[zit] step {plan.cur_step}/{total} frac={frac:.2f} "
-                      f"image_self={plan.image_self_active}")
+                      f"strength={plan.cur_strength}")
             plan.cur_step += 1
 
             return apply_model(x, t, **c)

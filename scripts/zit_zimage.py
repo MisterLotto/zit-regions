@@ -196,7 +196,8 @@ def _make_forward(plan, module):
                 # isolation is only kept for the early steps (composition), then
                 # released so the scene fuses; text routing stays on throughout.
                 image_self = getattr(plan, "image_self_active", True)
-                strength = getattr(plan, "separation_strength", float("inf"))
+                strength = getattr(plan, "cur_strength",
+                                   getattr(plan, "separation_strength", float("inf")))
                 bias = _get_bias(plan, cap_len, img_real, img_pad, x.dtype, x.device,
                                  image_self=image_self, strength=strength)
                 x_mask = bias if x_mask is None else _combine(x_mask, bias)
