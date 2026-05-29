@@ -62,11 +62,18 @@ class ZitRegions(scripts.Script):
                      "two subjects, then drop to the residual below.",
             )
             residual = gr.Slider(
-                0.0, 16.0, value=3.0, step=0.5,
+                0.0, 16.0, value=0.5, step=0.5,
                 label="Residual separation",
                 info="Gentle cross-region penalty kept for the remaining steps so "
                      "subjects don't re-merge while the scene fuses. 0 = full "
-                     "release (tends to re-merge); ~2-4 is a good range.",
+                     "release (tends to re-merge); ~0.5-2 is a good range.",
+            )
+            feather = gr.Slider(
+                0, 40, value=12, step=2,
+                label="Boundary feather (%)",
+                info="Width of the cross-fade band at region boundaries. Softens "
+                     "the seam / blur where regions meet. 0 = hard edge; ~10-20 "
+                     "smooths the transition.",
             )
             debug = gr.Checkbox(value=False, label="Debug (print shapes/spans)")
 
@@ -78,13 +85,14 @@ class ZitRegions(scripts.Script):
             (overlap, "ZIT overlap"),
             (isolation, "ZIT hardcut"),
             (residual, "ZIT residual"),
+            (feather, "ZIT feather"),
         ]
         self.paste_field_names = [k for _, k in self.infotext_fields]
 
-        return [enabled, mode, ratios, strength, overlap, isolation, residual, debug]
+        return [enabled, mode, ratios, strength, overlap, isolation, residual, feather, debug]
 
     # ----------------------------------------------------------------- #
-    def process_before_every_sampling(self, p, enabled, mode, ratios, strength, overlap, isolation, residual, debug, **kwargs):
+    def process_before_every_sampling(self, p, enabled, mode, ratios, strength, overlap, isolation, residual, feather, debug, **kwargs):
         # install here (not process()) so we run AFTER Forge applies LoRAs and
         # rebuilds forge_objects.unet; installing earlier gets wiped by LoRAs.
         self._teardown()  # safety: never leave a stale patch installed
@@ -101,6 +109,7 @@ class ZitRegions(scripts.Script):
         if not plan.regions:
             return
         plan.overlap = max(0.0, min(0.5, overlap / 100.0))
+        plan.feather = max(0.0, min(0.5, feather / 100.0))
         plan.debug = debug
         plan.active = False  # flipped on once captions + grid are ready
 
@@ -148,6 +157,7 @@ class ZitRegions(scripts.Script):
                 "ZIT overlap": overlap,
                 "ZIT hardcut": isolation,
                 "ZIT residual": residual,
+                "ZIT feather": feather,
             })
 
         if debug:

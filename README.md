@@ -18,11 +18,22 @@ attention to hook. Instead this extension:
 2. injects that stack as the model's caption context via Forge's
    `set_model_unet_function_wrapper`;
 3. monkeypatches every `JointAttention.forward` to add an **additive
-   `[seq, seq]` bias** so each image patch may only attend to the caption
-   columns of the region(s) it falls in (plus the shared base prompt).
+   `[seq, seq]` bias** that does three things:
+   - **caption isolation** — each region's caption tokens don't attend across
+     regions (block-diagonal), so the shared refiner can't blend them;
+   - **image→text routing** — each image patch reads only its region's caption
+     columns (plus the base), using sharp region masks;
+   - **image↔image separation** — cross-region image attention is penalized
+     (step-gated: hard early, gentle residual after) so subjects don't bleed
+     spatially yet the scene still fuses.
+
+Because the fast attention backends (sage/flash) ignore an additive mask, the
+adapter temporarily swaps Forge's `attention_function` to the mask-honoring SDPA
+path while active.
 
 Nothing in the Forge install is modified on disk — all patching is runtime
-attribute assignment, reverted in `postprocess`.
+attribute assignment, reverted in `postprocess` (and self-reverted if install
+fails, so it can't leak into other models).
 
 ## Layout
 
@@ -36,35 +47,57 @@ Adding another joint-attention DiT later = one new adapter; the core is shared.
 
 ## Usage
 
-Enable in the **zit-regions** accordion. First chunk of the prompt box is the
-common/base prompt; chunks after each `BREAK` are one region each, in split
-order. `Region ratios` sets relative sizes along the split direction.
+Tick **Enable** in the **zit-regions** accordion, then prompt in the **main
+prompt box** using `BREAK`:
+
+- the **first chunk** is the common/base prompt (shared by the whole image —
+  setting, lighting, framing; keep people/count words out of it);
+- each chunk **after a `BREAK`** is one region, in split order.
+
+`Region ratios` sets relative sizes along the split direction (`Split
+direction` = columns or rows).
 
 ```
-a sunny park BREAK a man in a red coat BREAK a woman in a blue dress
+dim cocktail bar, warm tungsten light, wide cinematic shot
+BREAK a man in a red suit on the left
+BREAK a woman in a black leather dress on the right
 ratios: 1,1   direction: columns
 ```
+
+`<lora:...>` tags work as usual in the main prompt (Forge applies them
+globally); they're stripped from the per-region text so they don't pollute the
+embeddings. Per-region LoRA *confinement* is not yet implemented — a LoRA
+affects the whole image, localized only by the region prompt (same as RP).
+
+Settings are written to the image metadata (`ZIT mode/ratios/strength/overlap/
+hardcut/residual`) and restored by **Send to txt2img** / paste-params.
 
 ## Status — working
 
 Confirmed generating distinct characters in a shared scene on Z-Image Turbo
-(9-step). Two key findings drove the design:
+(9-step). Two findings drove the design:
 
 - **Text routing alone doesn't separate subjects on a DiT.** Image patches also
   attend to *each other*, so content bleeds spatially regardless of which text
   each patch reads. Cross-region image↔image attention must also be restricted.
-- **A hard image↔image cut produces two separate images** if held the whole way.
-  On few-step turbo, applying it for only the **first ~20% of steps** plants two
-  distinct figures, then releasing it lets the scene fuse into one coherent image.
+- **A constant hard cut produces two separate images; a full release lets them
+  re-merge.** The fix is a hybrid: a hard cut over the early steps to commit two
+  distinct figures, then a gentle *residual* penalty for the rest so they hold
+  without splitting, while the scene fuses.
 
 ### Controls
 
-- **Separation strength** — penalty on cross-region image attention (16 = hard
-  cut, recommended).
+- **Separation strength** — penalty on cross-region image attention during the
+  hard-cut window (16 = hard cut).
 - **Region overlap %** — optional bridging band; leave 0 unless a seam shows.
-- **Apply for (% of steps)** — the main knob; ~20 is a good default for turbo.
+- **Hard cut for (% of steps)** — how long the hard cut holds before dropping to
+  the residual.
+- **Residual separation** — gentle penalty kept for the remaining steps so
+  subjects don't re-merge (0 = full release; ~0.5–3 is the useful range).
 
-Working recipe: **strength 16, overlap 0, apply 20%**.
+Starting recipe: **strength 16, overlap 0, hard cut 20–30%, residual 0.5–1**.
+Separation is somewhat seed-dependent; tune the residual and lean on a strong
+base prompt to fuse the scene.
 
 Turbo is guidance-distilled, so there is no negative-prompt / CFG path — regions
 are positive-only by design.
