@@ -32,14 +32,14 @@ class ZitRegions(scripts.Script):
             mode = gr.Radio(
                 ["columns", "rows"], value="columns", label="Split direction"
             )
+            gr.Markdown(
+                "Prompt in the **main prompt box**, split with `BREAK`: the first "
+                "chunk is the common/base prompt, each chunk after is one region "
+                "(in split order).\n\n"
+                "`a sunny park BREAK a man in a red coat BREAK a woman in a blue dress`"
+            )
             ratios = gr.Textbox(
                 value="1,1", label="Region ratios (comma separated)"
-            )
-            prompt = gr.Textbox(
-                value="",
-                lines=4,
-                label="Regions  (first chunk = common/base, then one per region, separated by BREAK)",
-                placeholder="a sunny park BREAK a man in a red coat BREAK a woman in a blue dress",
             )
             strength = gr.Slider(
                 0.0, 16.0, value=16.0, step=0.5,
@@ -63,13 +63,16 @@ class ZitRegions(scripts.Script):
                      "few-step turbo; the key knob to tune.",
             )
             debug = gr.Checkbox(value=False, label="Debug (print shapes/spans)")
-        return [enabled, mode, ratios, prompt, strength, overlap, isolation, debug]
+        return [enabled, mode, ratios, strength, overlap, isolation, debug]
 
     # ----------------------------------------------------------------- #
-    def process(self, p, enabled, mode, ratios, prompt, strength, overlap, isolation, debug):
+    def process_before_every_sampling(self, p, enabled, mode, ratios, strength, overlap, isolation, debug, **kwargs):
+        # install here (not process()) so we run AFTER Forge applies LoRAs and
+        # rebuilds forge_objects.unet; installing earlier gets wiped by LoRAs.
         self._teardown()  # safety: never leave a stale patch installed
 
-        if not enabled or not prompt.strip():
+        prompt = self._main_prompt(p)
+        if not enabled or "BREAK" not in prompt:
             return
         if not adapter.is_supported(p):
             if debug:
@@ -154,6 +157,17 @@ class ZitRegions(scripts.Script):
             return apply_model(x, t, **c)
 
         return wrapper
+
+    @staticmethod
+    def _main_prompt(p):
+        pr = getattr(p, "prompt", "")
+        if isinstance(pr, (list, tuple)):
+            pr = pr[0] if pr else ""
+        if not pr:
+            allp = getattr(p, "all_prompts", None)
+            if allp:
+                pr = allp[0]
+        return pr or ""
 
     def _teardown(self):
         if self.plan is not None:

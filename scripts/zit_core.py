@@ -11,9 +11,14 @@ The model-specific glue (detection, monkeypatching, caption encoding, the
 text/image split point) lives in an adapter module, e.g. scripts/zit_zimage.py.
 """
 
+import re
 from dataclasses import dataclass, field
 
 import torch
+
+# extra-network / lora tags like <lora:name:1>, <hypernet:...>; Forge harvests
+# these from the main prompt itself, so strip them from the per-region text.
+_TAG_RE = re.compile(r"<[^>]*>")
 
 NEG_INF = float("-inf")
 
@@ -54,7 +59,7 @@ def parse_regions(prompt: str, ratios: str, mode: str) -> Plan:
     ratios: e.g. "1,2,1" -> relative sizes of the regions along `mode`.
     mode:   "columns" (split left->right) or "rows" (top->bottom).
     """
-    chunks = [c.strip() for c in prompt.split("BREAK")]
+    chunks = [_TAG_RE.sub("", c).strip() for c in prompt.split("BREAK")]
     chunks = [c for c in chunks if c]
     if not chunks:
         return Plan(base_prompt="", regions=[])
