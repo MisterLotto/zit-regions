@@ -119,13 +119,24 @@ class ZitRegions(scripts.Script):
         # encode base + region prompts, concat, record spans
         plan.caption_stack = adapter.build_caption_stack(p, plan)
 
-        # install the attention monkeypatch + the caption-injection wrapper
-        adapter.install(p, plan)
-        unet = p.sd_model.forge_objects.unet
-        unet.set_model_unet_function_wrapper(self._make_unet_wrapper(plan))
+        # install the attention monkeypatch + the caption-injection wrapper.
+        # Register self.plan FIRST so that if install partially completes and
+        # then throws, the next run's _teardown() can still revert the global
+        # attention swap / monkeypatch instead of leaking into other models.
+        self.plan = plan
+        try:
+            adapter.install(p, plan)
+            unet = p.sd_model.forge_objects.unet
+            unet.set_model_unet_function_wrapper(self._make_unet_wrapper(plan))
+        except Exception:
+            self._teardown()
+            if debug:
+                import traceback
+                print("[zit] install failed; reverted. Generation proceeds unmodified.")
+                traceback.print_exc()
+            return
 
         plan.active = True
-        self.plan = plan
 
         # record settings into image metadata so a good run can be reproduced
         params = getattr(p, "extra_generation_params", None)
