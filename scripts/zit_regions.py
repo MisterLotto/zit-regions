@@ -137,6 +137,7 @@ class ZitRegions(scripts.Script):
             adapter.install(p, plan)
             unet = p.sd_model.forge_objects.unet
             unet.set_model_unet_function_wrapper(self._make_unet_wrapper(plan))
+            plan._unet = unet  # so teardown can remove the wrapper again
         except Exception:
             self._teardown()
             if debug:
@@ -176,6 +177,11 @@ class ZitRegions(scripts.Script):
         which holds the attention mask (printed when debug is on)."""
 
         def wrapper(apply_model, params):
+            # if torn down (extension turned off) but the wrapper is still
+            # attached, pass through untouched — never inject a stale caption.
+            if not getattr(plan, "active", False):
+                return apply_model(params["input"], params["timestep"], **dict(params["c"]))
+
             x = params["input"]
             t = params["timestep"]
             c = dict(params["c"])
@@ -228,5 +234,14 @@ class ZitRegions(scripts.Script):
 
     def _teardown(self):
         if self.plan is not None:
+            self.plan.active = False
             adapter.remove(self.plan)
+            # remove the caption-injection wrapper so it can't keep replacing
+            # the prompt on later (disabled) generations.
+            unet = getattr(self.plan, "_unet", None)
+            if unet is not None:
+                try:
+                    unet.model_options.pop("model_function_wrapper", None)
+                except Exception:
+                    pass
             self.plan = None
