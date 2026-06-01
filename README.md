@@ -7,6 +7,19 @@ Lets you assign different prompts to different regions of one image — the
 spiritual successor to Regional Prompter / Latent Couple, rebuilt for joint-
 attention diffusion transformers instead of the SD/SDXL UNet.
 
+## Compatibility
+
+- **SD Forge (Forge Neo / Forge Classic)** — relies on Forge's Comfy-derived
+  backend; it is **not** an A1111-classic extension.
+- **Z-Image / Z-Image Turbo** (the NextDiT / Lumina2-family transformer). Other
+  joint-attention DiTs are not supported yet (one adapter each would add them).
+- Cleanly no-ops on any other model (Flux, SDXL, …) — see *Safety* below.
+
+## Installation
+
+In Forge: **Extensions → Install from URL**, paste this repo's URL, install,
+then **Reload UI**. (Or clone into `webui/extensions/`.)
+
 ## How it works
 
 Z-Image is a DiT with **joint self-attention**: caption tokens and image tokens
@@ -101,3 +114,25 @@ base prompt to fuse the scene.
 
 Turbo is guidance-distilled, so there is no negative-prompt / CFG path — regions
 are positive-only by design.
+
+## Safety
+
+All patching is runtime attribute assignment, reverted in `postprocess` (and
+self-reverted if install fails). When the extension is disabled, the prompt has
+no `BREAK`, or a non–Z-Image model is loaded, it returns before making any
+change — so simply having it installed does not affect other models.
+
+## Known limitations
+
+- **Seed-sensitive.** Separation isn't 100% per seed; a strong base prompt and a
+  little tuning (hard cut %, residual, feather) raise the hit rate.
+- **Region boundaries** can still show mild blur/distortion; the feather control
+  reduces but doesn't fully eliminate it. Prompt wording helps.
+- **LoRAs apply globally**, localized only by the region prompt. Per-region LoRA
+  confinement is not implemented, and stacking **two LoRAs** with the extension
+  active is currently unstable (under investigation).
+- **Rows mode and 3+ regions** are supported by the code but lightly tested.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
