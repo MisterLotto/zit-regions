@@ -128,9 +128,10 @@ change — so simply having it installed does not affect other models.
   little tuning (hard cut %, residual, feather) raise the hit rate.
 - **Region boundaries** can still show mild blur/distortion; the feather control
   reduces but doesn't fully eliminate it. Prompt wording helps.
-- **LoRAs apply globally**, localized only by the region prompt. Per-region LoRA
-  confinement is not implemented, and stacking **two LoRAs** with the extension
-  active is currently unstable (under investigation).
+- **LoRAs are not reliable with this extension.** Behavior is inconsistent — a
+  LoRA may apply globally, or its effect may bleed across regions. Per-region
+  LoRA confinement is not implemented. Using LoRAs alongside zit-regions is
+  currently not recommended.
 - **Rows mode and 3+ regions** are supported by the code but lightly tested.
 
 ## License
