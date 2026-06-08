@@ -73,7 +73,12 @@ def parse_regions(prompt: str, ratios: str, mode: str) -> Plan:
         weights = [float(x) for x in ratios.replace(" ", "").split(",") if x]
     except ValueError:
         weights = []
-    if len(weights) != len(region_prompts):
+    invalid_weights = (
+        len(weights) != len(region_prompts)
+        or any(w <= 0 for w in weights)
+        or sum(weights) <= 0
+    )
+    if invalid_weights:
         weights = [1.0] * len(region_prompts)  # equal split fallback
 
     total = sum(weights)
